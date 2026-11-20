@@ -1,0 +1,138 @@
+name: Baked Desk - Linux
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  RUST_VERSION: '1.75'
+  VCPKG_COMMIT_ID: 9e593bb18ea69cc5095e012465dcd675a822ed0d
+  VCPKG_CMAKE_VERSION: 4.3.0
+  FLUTTER_VERSION: 3.24.5
+  VERSION: 1.5.3
+  VCPKG_BINARY_SOURCES: clear;x-gha,readwrite
+  UPLOAD_ARTIFACT: 'true'
+  TAG_NAME: baked
+jobs:
+  bridge:
+    uses: ./.github/workflows/bridge.yml
+  build-linux:
+    needs:
+    - bridge
+    name: build linux x64
+    runs-on: ${{ matrix.job.on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+        - arch: x86_64
+          target: x86_64-unknown-linux-gnu
+          distro: ubuntu18.04
+          true: ubuntu-22.04
+          deb_arch: amd64
+          vcpkg-triplet: x64-linux
+    steps:
+    - name: Export GitHub Actions cache environment variables
+      uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410
+      with:
+        script: 'core.exportVariable(''ACTIONS_CACHE_URL'', process.env.ACTIONS_CACHE_URL || '''');
+
+          core.exportVariable(''ACTIONS_RUNTIME_TOKEN'', process.env.ACTIONS_RUNTIME_TOKEN || '''');
+
+          '
+    - name: Maximize build space
+      run: "sudo rm -rf /opt/ghc\nsudo rm -rf /usr/local/lib/android\nsudo rm -rf /usr/share/dotnet\nsudo apt-get update -y\nsudo apt-get install -y nasm\nif [[ \"${{ matrix.job.arch }}\" == \"x86_64\"\
+        \ ]]; then\n  sudo apt-get install -y qemu-user-static\nfi\n"
+    - name: Checkout source code
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      with:
+        submodules: recursive
+    - name: Aplicar a marca Baked Desk
+      shell: bash
+      run: bash baked/rebrand.sh
+    - name: Set Swap Space
+      uses: pierotofy/set-swap-space@49819abfb41bd9b44fb781159c033dba90353a7c
+      with:
+        swap-size-gb: 12
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+      if: matrix.job.arch == 'x86_64' || env.UPLOAD_ARTIFACT == 'true'
+      with:
+        toolchain: ${{ env.RUST_VERSION }}
+        targets: ${{ matrix.job.target }}
+        components: rustfmt
+    - name: Save Rust toolchain version
+      run: 'RUST_TOOLCHAIN_VERSION=$(cargo --version | awk ''{print $2}'')
+
+        echo "RUST_TOOLCHAIN_VERSION=$RUST_TOOLCHAIN_VERSION" >> $GITHUB_ENV
+
+        '
+    - name: Disable rust bridge build
+      run: '# only build cdylib
+
+        sed -i  "s/\[\"cdylib\", \"staticlib\", \"rlib\"\]/\[\"cdylib\"\]/g" Cargo.toml
+
+        '
+    - name: Restore bridge files
+      if: matrix.job.arch == 'x86_64' || env.UPLOAD_ARTIFACT == 'true'
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: bridge-artifact
+        path: ./
+    - name: Setup vcpkg with Github Actions binary cache
+      if: matrix.job.arch == 'x86_64' || env.UPLOAD_ARTIFACT == 'true'
+      uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
+      with:
+        vcpkgDirectory: /opt/artifacts/vcpkg
+        vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+        doNotCache: false
+    - name: Install vcpkg dependencies
+      if: matrix.job.arch == 'x86_64' || env.UPLOAD_ARTIFACT == 'true'
+      run: "sudo apt install -y libva-dev && apt show libva-dev\nif ! $VCPKG_ROOT/vcpkg \\\n  install \\\n  --triplet ${{ matrix.job.vcpkg-triplet }} \\\n  --x-install-root=\"$VCPKG_ROOT/installed\"; then\n\
+        \  find \"${VCPKG_ROOT}/\" -name \"*.log\" | while read -r _1; do\n    echo \"$_1:\"\n    echo \"======\"\n    cat \"$_1\"\n    echo \"======\"\n    echo \"\"\n  done\n  exit 1\nfi\nhead -n 100\
+        \ \"${VCPKG_ROOT}/buildtrees/ffmpeg/build-${{ matrix.job.vcpkg-triplet }}-rel-out.log\" || true\n"
+      shell: bash
+    - uses: rustdesk-org/run-on-arch-action@d3fcfbb632b84cf7f6bc772bfaaa2c2f4f8789a8
+      name: Build rustdesk
+      id: vcpkg
+      if: matrix.job.arch == 'x86_64' || env.UPLOAD_ARTIFACT == 'true'
+      with:
+        arch: ${{ matrix.job.arch }}
+        distro: ${{ matrix.job.distro }}
+        githubToken: ${{ github.token }}
+        setup: 'ls -l "${PWD}"
+
+          ls -l /opt/artifacts/vcpkg/installed
+
+          '
+        dockerRunArgs: '--volume "${PWD}:/workspace"
+
+          --volume "/opt/artifacts:/opt/artifacts"
+
+          '
+        shell: /bin/bash
+        install: "apt-get update -y\necho -e \"installing deps\"\napt-get install -y \\\n   build-essential \\\n   clang \\\n   cmake \\\n   curl \\\n   gcc \\\n   git \\\n   g++ \\\n   libayatana-appindicator3-dev\
+          \ \\\n   libasound2-dev \\\n   libclang-10-dev \\\n   libgstreamer1.0-dev \\\n   libgstreamer-plugins-base1.0-dev \\\n   libgtk-3-dev \\\n   libpulse-dev \\\n   libva-dev \\\n   libxcb-randr0-dev\
+          \ \\\n   libxcb-shape0-dev \\\n   libxcb-xfixes0-dev \\\n   libxdo-dev \\\n   libxfixes-dev \\\n   llvm-10-dev \\\n   nasm \\\n   ninja-build \\\n   pkg-config \\\n   tree \\\n   python3 \\\n\
+          \   rpm \\\n   unzip \\\n   wget \\\n   xz-utils \\\n   libssl-dev\n# we have libopus compiled by us.\napt-get remove -y libopus-dev || true\n# output devs\nls -l ./\ntree -L 3 /opt/artifacts/vcpkg/installed\n"
+        run: "# disable git safe.directory\ngit config --global --add safe.directory \"*\"\n# rust\npushd /opt\n# do not use rustup, because memory overflow in qemu\nwget -O rust.tar.gz https://static.rust-lang.org/dist/rust-${{env.RUST_TOOLCHAIN_VERSION}}-${{\
+          \ matrix.job.target }}.tar.gz\ntar -zxvf rust.tar.gz > /dev/null && rm rust.tar.gz\ncd rust-${{env.RUST_TOOLCHAIN_VERSION}}-${{ matrix.job.target }} && ./install.sh\nrm -rf rust-${{env.RUST_TOOLCHAIN_VERSION}}-${{\
+          \ matrix.job.target }}\n# edit config\nmkdir -p ~/.cargo/\necho \"\"\"\n  [source.crates-io]\n  registry = 'https://github.com/rust-lang/crates.io-index'\n\"\"\" > ~/.cargo/config\ncat ~/.cargo/config\n\
+          # start build\npushd /workspace\nexport VCPKG_ROOT=/opt/artifacts/vcpkg\nif [[ \"${{ matrix.job.arch }}\" == \"aarch64\" ]]; then\n  export JOBS=\"--jobs 3\"\nelse\n  export JOBS=\"\"\nfi\necho\
+          \ $JOBS\ncargo build --locked --lib $JOBS --features hwcodec,flutter,unix-file-copy-paste --release\nrm -rf target/release/deps target/release/build\nrm -rf ~/.cargo\n\n# Setup Flutter\n# disable\
+          \ git safe.directory\ngit config --global --add safe.directory \"*\"\npushd /workspace\ncase ${{ matrix.job.arch }} in\n  aarch64)\n    export PATH=/opt/flutter-elinux/bin:$PATH\n    sed -i \"\
+          s/flutter build linux --release/flutter-elinux build linux --verbose/g\" ./build.py\n    sed -i \"s/x64\\/release/arm64\\/release/g\" ./build.py\n  ;;\n  x86_64)\n    export PATH=/opt/flutter/bin:$PATH\n\
+          \  ;;\nesac\npopd\npushd /opt\nwget https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${{ env.FLUTTER_VERSION }}-stable.tar.xz\ntar xf flutter_linux_${{\
+          \ env.FLUTTER_VERSION }}-stable.tar.xz\ncase ${{ matrix.job.arch }} in\n  aarch64)\n    # clone repo and reset to flutter ${{ env.FLUTTER_VERSION }}\n    git clone https://github.com/sony/flutter-elinux.git\
+          \ || true\n    pushd flutter-elinux\n      git fetch\n      git reset --hard ${{ env.FLUTTER_VERSION }}\n      bin/flutter-elinux doctor -v\n      bin/flutter-elinux precache --linux\n    popd\n\
+          \    cp -R flutter/bin/cache/artifacts/engine/linux-x64/shader_lib flutter-elinux/flutter/bin/cache/artifacts/engine/linux-arm64\n    rm -rf flutter\n  ;;\n  x86_64)\n    flutter doctor -v\n \
+          \ ;;\nesac\n\nif [[ \"3.24.5\" == ${{ env.FLUTTER_VERSION }} ]]; then\n  case ${{ matrix.job.arch }} in\n    aarch64)\n      pushd /opt/flutter-elinux/flutter\n    ;;\n    x86_64)\n      pushd\
+          \ /opt/flutter\n    ;;\n  esac\n  git apply ${{ github.workspace }}/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff\n  popd\nfi\n\n# build flutter\npushd /workspace\nexport CARGO_INCREMENTAL=0\n\
+          export DEB_ARCH=${{ matrix.job.deb_arch }}\npython3 ./build.py --flutter --skip-cargo\nif [[ \"${{ matrix.job.arch }}\" == \"x86_64\" && \"${{ inputs.upload-artifact }}\" == \"false\" ]]; then\n\
+          \  pushd /workspace/flutter\n  flutter test --no-pub --timeout 60s || exit 1\n  popd\nfi\nfor name in rustdesk*??.deb; do\n  mv \"$name\" \"${name%%.deb}-${{ matrix.job.arch }}.deb\"\ndone\n\n"
+    - name: Guardar pacote .deb (1 dia)
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: baked-desk-linux-x64
+        path: rustdesk-*.deb
+        retention-days: 1
+        if-no-files-found: error
