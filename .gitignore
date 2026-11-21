@@ -60,3 +60,7 @@ flutter/web/
 /third_party/libdrmtap/
 # Local git worktrees
 .worktrees/
+
+# Baked Desk: ícones precisam ir para o git
+!baked/assets/
+!baked/assets/**
