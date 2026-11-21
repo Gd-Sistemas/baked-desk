@@ -82,4 +82,17 @@ cp "$A/icon.svg" res/scalable.svg; cp "$A/icon.svg" flutter/assets/icon.svg
 cp "$A/flutter-icon.png" flutter/assets/icon.png
 cp "$A/icon.ico" flutter/windows/runner/resources/app_icon.ico
 
+# 7) Android: identificador próprio (convive com o RustDesk oficial), nome, textos e ícones
+AND=flutter/android/app/src/main
+must flutter/android/app/build.gradle 'applicationId "com.carriez.flutter_hbb"'
+sed -i 's|applicationId "com.carriez.flutter_hbb"|applicationId "br.com.gdsistemas.bakeddesk"|' flutter/android/app/build.gradle
+must flutter/android/app/build.gradle 'applicationId "br.com.gdsistemas.bakeddesk"'
+must "$AND/AndroidManifest.xml" 'android:label="RustDesk"'
+sed -i "s|android:label=\"RustDesk\"|android:label=\"${NAME}\"|; s|android:label=\"RustDesk Input\"|android:label=\"${NAME} Input\"|" "$AND/AndroidManifest.xml"
+must "$AND/AndroidManifest.xml" "android:label=\"${NAME}\""
+for f in flutter/android/app/src/main/res/values*/strings.xml; do sed -i "s|RustDesk|${NAME}|g" "$f"; done
+must "$AND/res/values/strings.xml" "<string name=\"app_name\">${NAME}</string>"
+sed -i -E 's|(<color name="ic_launcher_background">)[^<]*(</color>)|\1#000899\2|' "$AND/res/values/ic_launcher_background.xml"
+for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do cp "$A/android/mipmap-$d/"*.png "$AND/res/mipmap-$d/"; done
+
 echo "rebrand: ${NAME} -> ${SERVER} (padrões, atribuição, pacote baked-desk, ícones)"
